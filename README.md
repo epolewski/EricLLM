@@ -23,7 +23,7 @@ Note: I've been running this from WSL. Windows doesn't handle curl the same way.
 If you really wanted to test out the parallel performance, you can just throw a & in between the curl requests like so:
 
 ```
-curl http://192.168.0.155:8000/generate -H "Content-Type: application/json" -d '{ "prompt": "This will only test single-threaded performance, but makes sure the API works because", "max_tokens": 128, "temperature": 0.7 }' & curl http://192.168.0.155:8000/generate -H "Content-Type: application/json" -d '{ "prompt": "This is is a second prompt that will hopefully", "max_tokens": 128, "temperature": 0.7 }' & curl http://192.168.0.155:8000/generate -H "Content-Type: application/json" -d '{ "prompt": "Here's a 3rd thing that needs to be", "max_tokens": 128, "temperature": 0.7 }'
+curl http://192.168.0.155:8000/generate -H "Content-Type: application/json" -d '{ "prompt": "This block of code tests multi-threaded performance", "max_tokens": 128, "temperature": 0.7 }' & curl http://192.168.0.155:8000/generate -H "Content-Type: application/json" -d '{ "prompt": "This is is a second prompt that will hopefully", "max_tokens": 128, "temperature": 0.7 }' & curl http://192.168.0.155:8000/generate -H "Content-Type: application/json" -d '{ "prompt": "Here's a 3rd thing that needs to be", "max_tokens": 128, "temperature": 0.7 }'
 ```
 
 You'll really need to have parallel requests like this to really see the higher speeds. The single-request speed is still good, but read the bottom section about throughput if you're looking to process a lot of tokens.
