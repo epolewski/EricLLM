@@ -5,11 +5,11 @@ A fast batching API to serve LLM models
 
 Example usage for one GPU:
 ```
-python exllamaapi.py --model ./models/NeuralHermes-2.5-Mistral-7B-5.0bpw-h6-exl2 --max_prompts 8 --num_workers 3
+python ericLLM.py --model ./models/NeuralHermes-2.5-Mistral-7B-5.0bpw-h6-exl2 --max_prompts 8 --num_workers 3
 ```
 In a dual-GPU setup:
 ```
-python exllamaapi.py --model ./models/NeuralHermes-2.5-Mistral-7B-5.0bpw-h6-exl2 --gpu_split 24,24 --max_prompts 8 --num_workers 6 --gpu_balance
+python ericLLM.py --model ./models/NeuralHermes-2.5-Mistral-7B-5.0bpw-h6-exl2 --gpu_split 24,24 --max_prompts 8 --num_workers 6 --gpu_balance
 ```
 These will both launch the API with multiple workers. In the second example, performance is increased with the --gpu_balance switch that keeps the small models from splitting over GPUs. There's still work to be done on this and I think it gets CPU-bound right now when using 2 GPUs.
 
