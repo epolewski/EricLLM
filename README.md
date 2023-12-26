@@ -65,7 +65,7 @@ Pip install exllamav2
 
 You can run multiple workers with the --num_workers flag. This basically duplicates everything and load balances through FastAPI. You’ll need to use this to get full utilization of a lot of memory on the smaller models.
 Exllamav2 has this weird thing where the --gpu_split option is a little bugged. You want to put about half the model size (in memory) as the first GPU memory and the full memory size of the second card. So for 2x 3090’s with 24gb of memory a piece, you’d want to use something like --gpu_split 6,24 to load a 13b model evenly over the cards. At some point, they might change the way the loader works and make this bad advice. This is important to use when loading multiple workers across cards. Using --gpu_balance will round-robin distribute the workers across cards to try to maximize gpu utilization.
-This is not ready for production as there’s a bunch of rough edges I need to polish up. There’s a bunch of debug outputs and the help menu isn’t finished.
+This is not ready for production as there’s a bunch of rough edges I need to polish up. There’s a bunch of debug outputs and the help menu isn’t finished. If you set gpu_balance, make sure gpu_split is set to the full amount of memory for 2 cards and ignore the advice about gpu_split. This is only useful for when running multiple workers and prevents the issue where splitting the model weights between cards chops the performance in half.
 
 ## Throughput
 
