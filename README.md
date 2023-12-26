@@ -12,6 +12,14 @@ In a dual-GPU setup:
 python exllamaapi.py --model ./models/NeuralHermes-2.5-Mistral-7B-5.0bpw-h6-exl2 --gpu_split 24,24 --max_prompts 8 --num_workers 6 --gpu_balance
 ```
 These will both launch the API with multiple workers. In the second example, performance is increased with the --gpu_balance switch that keeps the small models from splitting over GPUs. There's still work to be done on this and I think it gets CPU-bound right now when using 2 GPUs.
+
+Test the API:
+
+```
+curl http://192.168.0.155:8000/generate -H "Content-Type: application/json" -d '{ "prompt": "This will only test single-threaded performance, but makes sure the API works because", "max_tokens": 128, "temperature": 0.7 }'
+```
+Note: I've been running this from WSL. Windows doesn't handle curl the same way.
+
 ## Options
 
 The current help menu, available via --help or -h:
@@ -61,4 +69,4 @@ This is not ready for production as there’s a bunch of rough edges I need to p
 
 ## Throughput
 
-My personal benchmarking shows it about 1/3rd the speed of vLLM using the same GPU/model type. That said, that still places it as one of the fastest batching APIs available right now, and it supports the arguably superior exl2 format with variable bitrate. Loading models is much faster than vLLM, taking under 15 seconds to load a Mistral7b. I'm able to pull over 200 tokens per second from that 7b model on a single 3090 using 3 worker processes and 8 prompts per worker. That same benchmark was ran on vLLM and it achieved over 600 tokens per second.
+My personal benchmarking shows it about 1/3rd the speed of vLLM using the same GPU/model type. That said, that still places it as one of the fastest batching APIs available right now, and it supports the arguably superior exl2 format with variable bitrate. Loading models is much faster than vLLM, taking under 15 seconds to load a Mistral7b. I'm able to pull over 200 tokens per second from that 7b model on a single 3090 using 3 worker processes and 8 prompts per worker. Compare this to the TGW API that was doing about 60 t/s. That same benchmark was ran on vLLM and it achieved over 600 tokens per second, so it's still got the crown. The speedup on larger models is far less dramatic but still present due to the batched caching. I'd love for someone to run their own benchmarks against the solution and let me know what they think!
