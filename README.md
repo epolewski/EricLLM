@@ -1,6 +1,16 @@
 # EricLLM
 A fast batching API to serve LLM models
 
+## Installation
+
+If you aren't using this inside a Text-Generation-WebUI root, you'll need to install the pre-reqs below. Otherwise, you can just drop the script in the root of TGW and run it within the cmd_windows.bat (or equivalent).
+
+```
+git clone https://github.com/epolewski/EricLLM
+cd EricLLM
+pip install -r requirements.txt
+```
+
 ## Usage
 
 Example usage for one GPU:
@@ -65,11 +75,7 @@ options:
 
 I’d been using vLLM to run inferencing at scale for a couple personal projects. It’s the absolute fastest thing out there for API serving. It’s awesome. But it’s got this [bug](https://github.com/vllm-project/vllm/issues/1116), or something’s wrong with my system, that’s causing me to not be able to run large models across my cards. I worked on it for days. I was so frustrated that I gave up and made my own batching API that’s feature-compatible (for what I use) in less time than I spent troubleshooting vLLM. I needed something with more performance than the text-generation-webui could provide with its single-threaded API locked by semaphore to a single request. It’s multi-threaded and rivals state of the art solutions for throughput, model loading time, and has no dependencies if you're already using the text-generation-webui.
 
-The underly engine is ExllamaV2. You can just drop it in your Text-Generation-Webui folder and run it under that environment and be fine on dependencies. At least, it worked for me on a new one-click install. Otherwise, you’ll need to install ExllamaV2.
-
-```
-Pip install exllamav2
-```
+The underly engine is ExllamaV2. You can just drop it in your Text-Generation-Webui folder and run it under that environment and be fine on dependencies. At least, it worked for me on a new one-click install. Otherwise, you’ll need to install the requirements in requirements.txt.
 
 You can run multiple workers with the --num_workers flag. This basically duplicates everything and load balances through FastAPI. You’ll need to use this to get full utilization of a lot of memory on the smaller models.
 Exllamav2 has this weird thing where the --gpu_split option is a little bugged. You want to put about half the model size (in memory) as the first GPU memory and the full memory size of the second card. So for 2x 3090’s with 24gb of memory a piece, you’d want to use something like --gpu_split 6,24 to load a 13b model evenly over the cards. At some point, they might change the way the loader works and make this bad advice. This is important to use when loading multiple workers across cards. Using --gpu_balance will round-robin distribute the workers across cards to try to maximize gpu utilization.
