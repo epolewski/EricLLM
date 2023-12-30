@@ -1,6 +1,8 @@
 # EricLLM
 A fast batching API to serve LLM models
 
+Update 12/29/2023: I improved the way the API handles requests. It's now about 20% faster and latency is much less! Also added an average tokens/sec count per thread. You can add those together to get your tokens/sec more easily.
+
 ## Installation
 
 If you aren't using this inside a Text-Generation-WebUI root, you'll need to install the pre-reqs below. Otherwise, you can just drop the script in the root of TGW and run it within the cmd_windows.bat (or equivalent).
@@ -15,11 +17,11 @@ pip install -r requirements.txt
 
 Example usage for one GPU:
 ```
-python ericLLM.py --model ./models/NeuralHermes-2.5-Mistral-7B-5.0bpw-h6-exl2 --max_prompts 8 --num_workers 3
+python ericLLM.py --model ./models/NeuralHermes-2.5-Mistral-7B-5.0bpw-h6-exl2 --max_prompts 8 --num_workers 2
 ```
 In a dual-GPU setup:
 ```
-python ericLLM.py --model ./models/NeuralHermes-2.5-Mistral-7B-5.0bpw-h6-exl2 --gpu_split 24,24 --max_prompts 8 --num_workers 6 --gpu_balance
+python ericLLM.py --model ./models/NeuralHermes-2.5-Mistral-7B-5.0bpw-h6-exl2 --gpu_split 24,24 --max_prompts 8 --num_workers 4 --gpu_balance
 ```
 These will both launch the API with multiple workers. In the second example, performance is increased with the --gpu_balance switch that keeps the small models from splitting over GPUs. There's still work to be done on this and I think it gets CPU-bound right now when using 2 GPUs.
 
