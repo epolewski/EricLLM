@@ -81,25 +81,32 @@ class PromptRequest(BaseModel):
     top_k: int = 40
     top_p: float = 0.5
     token_repetition_penalty: float = 1.00
-    stop: str = ""
+    stop: list = []
     skip_special_tokens: bool = True
     n: int = 1
 
 # Globals to store states
 prompts_queue = asyncio.Queue()
 results = {}
-token_count = {'prompt_tokens': 0, 'gen_tokens': 0, 'read_tokens' : 0}
+token_count = {'prompt_tokens': 0, 'gen_tokens': 0, 'read_tokens' : 0, 'total_tokens' : 0}
 processing_started = False
 model = None
 tokenizer = None
+total_processing_time = 0
+
+
+async def process_input(input_id):
+    print()
 
 async def inference_loop():
-    global prompts_queue, results, token_count, processing_started
+    global prompts_queue, results, token_count, processing_started, total_processing_time
     processing_started = True
     token_processing_start_time = None
 
 
     while processing_started:
+        # Quick sleep to let the API server send back requests, or it waits serially for all these to finish
+        await asyncio.sleep(0.01)
         if prompts_queue.qsize() == 0:
             await asyncio.sleep(0.1)
             continue  # No prompts to process yet.
@@ -154,60 +161,61 @@ async def inference_loop():
         while input_ids:
             inputs = torch.cat([x[:, -1:] for x in input_ids], dim=0)
             logits = model.forward(inputs, caches, input_mask=None).float().cpu()
-            #logits = model.forward(inputs, caches, input_mask=None).float()
-            #print (logits)
-            #logits = logits.indices.unsqueeze(0)
-            #logits = logits.permute(1, 0).cpu()
             eos = []
             r = random.random()
 
             for i in range(len(input_ids)):
-                length = len(input_ids[i])
                 token, _, _ = ExLlamaV2Sampler.sample(logits[i:i + 1, :, :], settings[i], input_ids[i], r, tokenizer)
                 tempIDs = torch.cat([input_ids[i], token], dim=1)
-                input_ids[i]= tempIDs
+                input_ids[i] = tempIDs
 
                 token_count['gen_tokens'] += 1
+                token_count['total_tokens'] += 1
 
-                if token.item() == tokenizer.eos_token_id or caches[i].current_seq_len == caches[i].max_seq_len:#I think I can change this to implement stop characters if the variable set further down doesn't work? I can't find it in the exllamav2 code.
+                if token.item() == tokenizer.eos_token_id or caches[i].current_seq_len == caches[i].max_seq_len:
                     eos.insert(0, i)  # Indices of completed prompts
+                    # Send the response immediately when a prompt is completed
+                    output = tokenizer.decode(input_ids[i])[0].strip()
+                    try:
+                        response_event = ids_lookup.pop(i)
+                        #input_ids.pop(i)
+                        #caches.pop(i)
+                        #settings.pop(i)
+                    except Exception as e:
+                        print(f"Error processing completed prompt: {e}")
+                        continue
 
+                    if response_event is not None:
+                        data = {"text": output}
+                        output = json.dumps(data, indent=2)
+                        if(args.verbose == True):
+                            print(output)
+                        response_event.set_result(output)
+                    continue
 
+                # Remove completed prompts from the lists
             for i in eos:
-                print(f"EOS#: {i}, {eos}")
-                output = tokenizer.decode(input_ids[i])[0].strip()
+                #print(f"EOS#: {i}, {eos}")
                 try:
-                    response_event = ids_lookup.pop(i)
+                    #ids_lookup.pop(i, None)
                     input_ids.pop(i)
                     caches.pop(i)
                     settings.pop(i)
-                    #response_event = ids_lookup.pop(i, None)
-                    #if response_event is None:
-
                 except:
                     print(f"Pop failed due to my crappy request lookup algorithm: {i}, {ids_lookup}")
-                    input_ids.pop(i)
-                    caches.pop(i)
-                    settings.pop(i)
-                    continue
-                if response_event is not None:
-
-                    #print(f"Pop succeeded: {i}, {ids_lookup}")
-                    data = {"text": output}
-                    output = json.dumps(data, indent=2)
-                    print(output)
-                    #output = "{\"text\": [\"" + output + "\"]}"
-                    response_event.set_result(output)
 
 
         current_time = time.time()
         time_elapsed_seconds = current_time - token_processing_start_time
+        total_processing_time += time_elapsed_seconds
         read_speed = token_count['read_tokens'] / time_elapsed_seconds
         generation_speed = token_count['gen_tokens'] / time_elapsed_seconds
+        average_gen_speed =  token_count['total_tokens'] / total_processing_time
 
         # Log stats to the console
         print(f"Batch process done. Read {token_count['read_tokens']} tokens at {read_speed:.2f} tokens/s. "
-              f"Generated {token_count['gen_tokens']} tokens at {generation_speed:.2f} tokens/s.")
+              f"Generated {token_count['gen_tokens']} tokens at {generation_speed:.2f} tokens/s.\n"
+              f"This thread generated a total of {token_count['total_tokens']} tokens at {average_gen_speed:.2f} tokens/s.")
         token_processing_start_time = None  # Reset the start time
 
 
@@ -223,7 +231,6 @@ async def generate(prompt: PromptRequest):
     encoded_prompt = tokenizer.encode(prompt.prompt)
     token_count['prompt_tokens'] += len(encoded_prompt) - 1
     completion_event = asyncio.Future()
-    max_tokens = prompt.max_tokens
     await prompts_queue.put((encoded_prompt, completion_event, prompt.max_tokens, prompt.temperature, prompt.top_k, prompt.top_p, prompt.token_repetition_penalty, prompt.stop))
 
     try:
@@ -288,7 +295,7 @@ def setup_model():
             except OSError as e:
                 print(f"Error removing lock: {e}")
             gpus = list(map(int, first_line.split(',')))
-            print(f"Pulled {first_line}")
+
         else:
             gpus = list(map(int, args.gpu_split.split(',')))
         model.load(gpu_split=gpus)
@@ -316,11 +323,13 @@ if __name__ == "__main__":
     import uvicorn
 
     # Clean up any previous file locks
-    try:
+    if(os.path.exists("gpu_assign")):
+        print(f"Deleting old gpu assignment file")
+        os.remove("gpu_assign")
+    if(os.path.exists("gpu_assign.lock")):
+        print(f"Deleting old gpu lock file")
         os.remove("gpu_assign.lock")
-        print(f"Deleting lock file")
-    except OSError as e:
-        print(f"No previous GPU assignment locks found")
+
 
     # global worker_assignments
     # worker_assignments = []
@@ -342,4 +351,4 @@ if __name__ == "__main__":
             file.write(content)
 
     print(f"Starting a server at {args.host} on port {args.port}...")
-    uvicorn.run("__main__:app", host=args.host, port=args.port, workers = args.num_workers)
+    uvicorn.run("__main__:app", host=args.host, port=args.port, workers = args.num_workers, http="h11")
