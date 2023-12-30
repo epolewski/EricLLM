@@ -1,7 +1,7 @@
 # EricLLM
 A fast batching API to serve LLM models
 
-Update 12/29/2023: I improved the way the API handles requests. It's now about 20% faster and latency is much less! Also added an average tokens/sec count per thread. You can add those together to get your tokens/sec more easily.
+Update 12/29/2023: I improved the way the API handles requests. It's now about 20% faster and latency is much less! Also added an average tokens/sec count per thread. You can add those together to get your tokens/sec more easily. Decreased the client request latency as well that's not reflected in the generated tokens/sec shown in the console but did reflect in my benchmarking script.
 
 ## Installation
 
@@ -86,5 +86,21 @@ This is not ready for production as there’s a bunch of rough edges I need to p
 A lot of the cache logic came from [this exllama example](https://github.com/turboderp/exllamav2/blob/master/examples/multiple_caches.py) if you want a more focused view on exllamav2 caching.
 
 ## Throughput
+All tests generate 256 tokens on RTX 3090 from 32 threads on an AMD 5900x:
+
+| Model | Speed | Workers | Max Prompts | Concurrent Requests | # 3090's |
+| --- | --- | --- | --- | --- | --- | --- |
+| NeuralHermes-2.5-Mistral-7B-8.0bpw-h8-exl2 | 212 tk/s | 2 | 8 | 16 | 1 |
+| OpenOrca-Platypus2-13B-GPTQ | 185 tk/s | 2 | 8 | 16 | 1 |
+| TinyLlama-1B-ckpt503-exl2 | 422 tk/s | 3 | 8 | 24 | 1 |
+| goliath-120b-2.18bpw-h6-exl2 | 21 tk/s | 1 | 16 | 16 | 2 |
+| turboderp_Mixtral-8x7B-instruct-exl2_5.0bpw | 41 tk/s | 1 | 16 | 16 | 2 |
+| Yi-34B-200K-4.65bpw-h6-exl2 | 95 tk/s* | 3 | 16 | 16 | 2 |
+| Llama2-70B-exl2-4.0bpw | 32 tk/s | 1 | 16 | 16 | 2 |
+
+<sup>*This is with the new --gpu_balance logic to split uneven workers over GPUs. My CPU maxed out so it might go higher.</sup>
+
+I discovered my 3090 is hitting a power limit, so I'm looking for a 12VHPWR cable that will work with my PSU. I think these numbers can go up. 
 
 My personal benchmarking shows it about 1/3rd the speed of vLLM using the same GPU/model type. That said, that still places it as one of the fastest batching APIs available right now, and it supports the arguably superior exl2 format with variable bitrate. Loading models is much faster than vLLM, taking under 15 seconds to load a Mistral7b. I'm able to pull over 200 tokens per second from that 7b model on a single 3090 using 3 worker processes and 8 prompts per worker. Compare this to the TGW API that was doing about 60 t/s. That same benchmark was ran on vLLM and it achieved over 600 tokens per second, so it's still got the crown. The speedup on larger models is far less dramatic but still present due to the batched caching. The other significant speedup is the caching which requires multiple incoming requests to be coming in. Best performance on my system was with small models, multiple workers, prompt cache set between 8-16, and dozens of simultaneous incoming requests. At that point I became CPU-bound and wasn't able to find out what 2x 3090's can do. Since doing the round-robin assignment worked for mostly maxing out the CUDA usage, I'm confident results can be significantly improved for multiple GPUs which would allow easy horizontal scaling under a simple single API endpoint. Setting the prompt cache lower will improve latency but also drop throughput a bit. I'd love for someone to run their own benchmarks against the solution and let me know what they think!
+
