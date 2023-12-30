@@ -128,6 +128,7 @@ async def inference_loop():
         prompt_count = 0
         print(f"Starting at {time.time()}")
         for _ in range(min(MAX_PROMPTS, prompts_queue.qsize())):
+            await asyncio.sleep(0.01)
             ids, response_event, max_tokens, temperature, top_k, top_p, token_repetition_penalty, stop = await prompts_queue.get()
             prompt_count += ids.size(1)
             batch_size = 1
@@ -177,7 +178,7 @@ async def inference_loop():
                     # Send the response immediately when a prompt is completed
                     output = tokenizer.decode(input_ids[i])[0].strip()
                     try:
-                        response_event = ids_lookup.pop(i)
+                        response_event = ids_lookup.pop(i, None)
                         #input_ids.pop(i)
                         #caches.pop(i)
                         #settings.pop(i)
@@ -191,6 +192,7 @@ async def inference_loop():
                         if(args.verbose == True):
                             print(output)
                         response_event.set_result(output)
+
                     continue
 
                 # Remove completed prompts from the lists
@@ -289,11 +291,12 @@ def setup_model():
 
                 # Truncate the file to remove any remaining characters from the old content
                 file.truncate()
-
+                print(first_line)
             try:
                 os.remove("gpu_assign.lock")
             except OSError as e:
                 print(f"Error removing lock: {e}")
+
             gpus = list(map(int, first_line.split(',')))
 
         else:
@@ -341,10 +344,19 @@ if __name__ == "__main__":
         for i in range(args.num_workers):
             gpu_mapping = []
             for j in range(len(gpus)):
-                if i % len(gpus) == j:
-                    gpu_mapping.append(gpus[j])
+                # If the number of workers doesn't fit evenly on the cards, distribute the odd ones out. Since exllamav2 doesn't
+                # distribute perfectly with --gpu_split, I'm going to just guess at it now with a formula. There's probably a more
+                # clever way to split them up perfectly, I just haven't come up with it yet.
+                if ((i + 1 + args.num_workers % len(gpus) > args.num_workers) and args.num_workers % len(gpus) != 0):
+                    #if i % len(gpus) != j:
+                    gpu_mapping.append(int(gpus[j] / len(gpus) + 2))
+                    #else:
+                        #gpu_mapping.append(gpus[j])
                 else:
-                    gpu_mapping.append(0)
+                    if i % len(gpus) == j:
+                        gpu_mapping.append(gpus[j])
+                    else:
+                        gpu_mapping.append(0)
             text_mapping = ','.join(map(str, gpu_mapping))
             content += text_mapping + "\n"
         with open("gpu_assign", 'w', encoding='utf-8') as file:
