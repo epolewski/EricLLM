@@ -1,7 +1,7 @@
 # EricLLM
 A fast batching API to serve LLM models
 
-Update 12/29/2023: I improved the way the API handles requests. It's now about 20% faster and latency is much less! Also added an average tokens/sec count per thread. You can add those together to get your tokens/sec more easily. Decreased the client request latency as well that's not reflected in the generated tokens/sec shown in the console but did reflect in my benchmarking script.
+Update 12/29/2023: I improved the way the API handles requests. It's now about 20% faster and latency is much less! Also added an average tokens/sec count per thread. You can add those together to get your tokens/sec more easily. Decreased the client request latency as well that's not reflected in the generated tokens/sec shown in the console but did reflect in my benchmarking script. There's also new gpu_balance logic primarily targeted at ~34b models ran on 2 24gb GPUs that boosted performance significantly by round-robin assigning the first 2 jobs and then splitting the third worker over the 2 GPUs to max out the CUDA cores.
 
 ## Installation
 
