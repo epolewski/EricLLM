@@ -88,9 +88,9 @@ A lot of the cache logic came from [this exllama example](https://github.com/tur
 ## Throughput
 All tests generate 256 tokens on RTX 3090 from 32 threads on an AMD 5900x:
 
-| Model | Speed | Workers | Max Prompts | Concurrent Requests | # 3090's |
-| --- | --- | --- | --- | --- | --- |
-| NeuralHermes-2.5-Mistral-7B-8.0bpw-h8-exl2 | 212 tk/s | 2 | 8 | 16 | 1 |
+|       Model                                |    Speed | Workers | Max Prompts | Concurrent Requests | # 3090's |
+|--------------------------------------------|----------|---------|-------------|---------------------|----------|
+| NeuralHermes-2.5-Mistral-7B-8.0bpw-h8-exl2 | 212 tk/s |    2    |      8      |         16          |    1     |
 | OpenOrca-Platypus2-13B-GPTQ | 185 tk/s | 2 | 8 | 16 | 1 |
 | TinyLlama-1B-ckpt503-exl2 | 422 tk/s | 3 | 8 | 24 | 1 |
 | goliath-120b-2.18bpw-h6-exl2 | 21 tk/s | 1 | 16 | 16 | 2 |
