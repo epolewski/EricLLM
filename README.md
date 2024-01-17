@@ -1,6 +1,7 @@
 # EricLLM
 A fast batching API to serve LLM models
 
+Update 01/17/2024: Bunch of random little upgrades/bug fixes. Some speed increases. Added lora support. Successfully found a bunch of things that don't work or make things worse. I added an --embiggen flag if you want to duplicate the attention layers and make arbitrarily large frankenmodels. I've not benchmarked this against anything. The decrease in speed may not reflect properly in the console. It doesn't work well, and I suspect it's because the cache is being shared between duplicate layers and causing issues. But the API server, on the whole, works a lot better now. My use of this is expanding and I'll keep dropping the updates in.
 Update 12/29/2023: I improved the way the API handles requests. It's now about 20% faster and latency is much less! Also added an average tokens/sec count per thread. You can add those together to get your tokens/sec more easily. Decreased the client request latency as well that's not reflected in the generated tokens/sec shown in the console but did reflect in my benchmarking script. There's also new gpu_balance logic primarily targeted at ~34b models ran on 2 24gb GPUs that boosted performance significantly by round-robin assigning the first 2 jobs and then splitting the third worker over the 2 GPUs to max out the CUDA cores.
 
 ## Installation
@@ -63,6 +64,8 @@ options:
   --timeout TIMEOUT     Sets timeout
   --alpha_value ALPHA_VALUE
                         Sets alpha_value
+  --embiggen EMBIGGEN
+                        Duplicates some attention layers this many times to make larger frankenmodels dynamically. May increase cromulence on benchmarks.
   --compress_pos_emb COMPRESS_POS_EMB
                         Sets compress_pos_emb
   --num_experts NUM_EXPERTS
@@ -83,14 +86,14 @@ You can run multiple workers with the --num_workers flag. This basically duplica
 Exllamav2 has this weird thing where the --gpu_split option is a little bugged. You want to put about half the model size (in memory) as the first GPU memory and the full memory size of the second card. So for 2x 3090’s with 24gb of memory a piece, you’d want to use something like --gpu_split 6,24 to load a 13b model evenly over the cards. At some point, they might change the way the loader works and make this bad advice. This is important to use when loading multiple workers across cards. Using --gpu_balance will round-robin distribute the workers across cards to try to maximize gpu utilization.
 This is not ready for production as there’s a bunch of rough edges I need to polish up. There’s a bunch of debug outputs and the help menu isn’t finished. If you set gpu_balance, make sure gpu_split is set to the full amount of memory for 2 cards and ignore the advice about gpu_split. This is only useful for when running multiple workers and prevents the issue where splitting the model weights between cards chops the performance in half.
 
-A lot of the cache logic came from [this exllama example](https://github.com/turboderp/exllamav2/blob/master/examples/multiple_caches.py) if you want a more focused view on exllamav2 caching.
+A lot of the cache logic came from [this exllama example](https://github.com/turboderp/exllamav2/blob/master/examples/multiple_caches.py) if you want a more focused view on exllamav2 caching, the layer slicing was [from here](https://gist.github.com/silphendio/535cd9c1821aa1290aa10d587b76a49c).
 
 ## Throughput
 All tests generate 256 tokens on RTX 3090 from 32 threads on an AMD 5900x:
 
 |       Model                                |    Speed | Workers | Max Prompts | Concurrent Requests | # 3090's |
 |--------------------------------------------|----------|---------|-------------|---------------------|----------|
-| NeuralHermes-2.5-Mistral-7B-8.0bpw-h8-exl2 | 212 tk/s |    2    |      8      |         16          |    1     |
+| NeuralHermes-2.5-Mistral-7B-8.0bpw-h8-exl2 | 238 tk/s |    2    |      16      |         16          |    1     |
 | OpenOrca-Platypus2-13B-GPTQ | 185 tk/s | 2 | 8 | 16 | 1 |
 | TinyLlama-1B-ckpt503-exl2 | 422 tk/s | 3 | 8 | 24 | 1 |
 | goliath-120b-2.18bpw-h6-exl2 | 21 tk/s | 1 | 16 | 16 | 2 |
