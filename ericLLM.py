@@ -16,6 +16,7 @@ from exllamav2 import (
     ExLlamaV2Cache_8bit,
     model_init,
     ExLlamaV2CacheBase,
+    ExLlamaV2Lora,
 )
 
 from exllamav2.generator import (
@@ -30,13 +31,15 @@ def parse_args():
     parser.add_argument('--verbose', action='store_true', default=False, help='Sets verbose')
     # Set model_directory
     parser.add_argument('--model', metavar='MODEL_DIRECTORY', type=str, help='Sets model_directory')
+    # Set lora
+    parser.add_argument('--lora', metavar='LORA_DIRECTORY', type=str, help='Sets lora_directory')
     # Set host
     parser.add_argument('--host', metavar='HOST', type=str, default='0.0.0.0', help='Sets host')
     # Set port
     parser.add_argument('--port', metavar='PORT', type=int, default=8000, help='Sets port')
     # Set max_seq_len
     parser.add_argument('--max-model-len', metavar='MAX_SEQ_LEN', type=int, default=4096, help='Sets max_seq_len')
-    # Set gpu_split
+    # Set max_input_len
     parser.add_argument('--max-input-len', metavar='MAX_INPUT_LEN', type=int, default=4096, help='Sets max_input_len')
     # Set gpu_split
     parser.add_argument('--gpu_split', metavar='GPU_SPLIT', type=str, default='',
@@ -53,6 +56,8 @@ def parse_args():
     # Set compress_pos_emb
     parser.add_argument('--compress_pos_emb', metavar='COMPRESS_POS_EMB', type=float, default=1.0,
                         help='Sets compress_pos_emb')
+    parser.add_argument('--embiggen', metavar='embiggen', type=int, default=0,
+                        help='Duplicates some attention layers this many times to make larger frankenmodels dynamically. May increase cromulence on benchmarks.')
     parser.add_argument('--num_experts', metavar='NUM_EXPERTS', type=int, default=2,
                         help='Number of experts in a model like Mixtral (not implemented yet)')
     parser.add_argument('--cache_8bit', metavar='CACHE_8BIT', type=bool, default=False,
@@ -93,6 +98,7 @@ processing_started = False
 model = None
 tokenizer = None
 total_processing_time = 0
+loras = []
 
 
 async def process_input(input_id):
@@ -128,7 +134,7 @@ async def inference_loop():
         prompt_count = 0
         print(f"Starting at {time.time()}")
         for _ in range(min(MAX_PROMPTS, prompts_queue.qsize())):
-            await asyncio.sleep(0.01)
+
             ids, response_event, max_tokens, temperature, top_k, top_p, token_repetition_penalty, stop = await prompts_queue.get()
             prompt_count += ids.size(1)
             batch_size = 1
@@ -144,6 +150,7 @@ async def inference_loop():
             settings_clone.top_p = top_p
             settings_clone.top_k = top_k
             settings_clone.token_repetition_penalty = token_repetition_penalty
+            settings_clone.batch_size = 1
 
             #settings_clone.vocab_size = 8192
             #settings_clone.max_attention_size = 2048 ** 16
@@ -151,7 +158,8 @@ async def inference_loop():
             #settings_clone.max_seq_len = 8192
             #settings_clone.hidden_size = 8192
             #settings_clone.disallow_tokens(tokenizer, [tokenizer.eos_token_id])
-            #settings.eos_token_id = 2
+            settings_clone.eos_token_id = 2
+            settings_clone.eos_token = "</s>"
 
             #settings.append(settings_proto.clone())
             settings.append(settings_clone)
@@ -161,7 +169,7 @@ async def inference_loop():
         print(f"Doing input_ids at {time.time()}")
         while input_ids:
             inputs = torch.cat([x[:, -1:] for x in input_ids], dim=0)
-            logits = model.forward(inputs, caches, input_mask=None).float().cpu()
+            logits = model.forward(inputs, caches, input_mask=None, loras = loras).float().cpu()
             eos = []
             r = random.random()
 
@@ -172,27 +180,35 @@ async def inference_loop():
 
                 token_count['gen_tokens'] += 1
                 token_count['total_tokens'] += 1
-
+                #stop_token = tokenizer.encode("</s>")
                 if token.item() == tokenizer.eos_token_id or caches[i].current_seq_len == caches[i].max_seq_len:
+                    if token.item() == settings[i].eos_token_id:
+                        print(f"Stopping for token: {token.item()}, settings eos: {settings[i].eos_token_id}, tokenizer eos: {tokenizer.eos_token_id}")
                     eos.insert(0, i)  # Indices of completed prompts
                     # Send the response immediately when a prompt is completed
                     output = tokenizer.decode(input_ids[i])[0].strip()
                     try:
                         response_event = ids_lookup.pop(i, None)
+                        print(f"Response event is: {response_event}")
                         #input_ids.pop(i)
                         #caches.pop(i)
                         #settings.pop(i)
+                        if response_event is not None:
+                            data = {"text": output}
+                            output = json.dumps(data, indent=2)
+                            if (args.verbose == True):
+                                print(output)
+                            response_event.set_result(output)
+                            #await asyncio.sleep(0.001)
+                            #break
+                        else:
+                            print(f"Response event is None")
                     except Exception as e:
                         print(f"Error processing completed prompt: {e}")
                         continue
 
-                    if response_event is not None:
-                        data = {"text": output}
-                        output = json.dumps(data, indent=2)
-                        if(args.verbose == True):
-                            print(output)
-                        response_event.set_result(output)
 
+                    #
                     continue
 
                 # Remove completed prompts from the lists
@@ -243,7 +259,7 @@ async def generate(prompt: PromptRequest):
 
 
 def setup_model():
-    global model, tokenizer
+    global model, tokenizer, loras
     model_directory = args.model
     config = ExLlamaV2Config()
     config.model_dir = model_directory
@@ -260,7 +276,7 @@ def setup_model():
     #config.q_handle = 2
     config.max_batch_size = 1
     #config.filters = "</s>"
-    #config.stop_strings = "\n"
+    config.stop_strings = "</s>"
     config.eos_token_id = 2
     #config.qkv_embed = True
 
@@ -306,6 +322,25 @@ def setup_model():
         model.load()
     tokenizer = ExLlamaV2Tokenizer(config)
     print("Model is loaded.")
+    if(args.lora):
+        lora = ExLlamaV2Lora.from_directory(model, args.lora)
+        loras.append(lora)
+
+    # Embiggen the model x times without increasing memory usage
+    for i in range(args.embiggen):
+        ## mix layers here
+        layer_arrangement = list(range(0, 14)) + list(range(4, 22))
+        #list(range(8, 18)) +
+        # modules arangement: [embedding, [...layers], rms-norm, head]
+        # where each layer is [attention, mlp]
+        old_modules = model.modules
+        model.modules = old_modules[:1]
+        for idx in layer_arrangement:
+            model.modules += old_modules[idx * 2 + 1: idx * 2 + 3]
+        model.modules += old_modules[-2:]
+        model.head_layer_idx = len(model.modules) - 1
+        model.config.num_hidden_layers = len(layer_arrangement)
+        model.last_kv_layer_idx = len(model.modules) - 4
 
 
 @app.on_event("startup")
