@@ -324,8 +324,11 @@ def setup_model():
         import ray, torch
         ray.shutdown()
         ray.init(num_gpus=torch.cuda.device_count())
-        model = LLM(model=args.model,max_context_len_to_capture=args.max_model_len,tensor_parallel_size=2)
-        #model = LLM(model=args.model,max_context_len_to_capture=args.max_model_len)
+        if(args.gpu_split):
+            count = args.gpu_split.split(",").count
+            model = LLM(model=args.model,max_context_len_to_capture=args.max_model_len,tensor_parallel_size=count)
+        else:
+            model = LLM(model=args.model,max_context_len_to_capture=args.max_model_len)
         return
 
     model_directory = args.model
