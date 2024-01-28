@@ -3,3 +3,4 @@ pydantic
 starlette
 exllamav2
 uvicorn
+vllm
