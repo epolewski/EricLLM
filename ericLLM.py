@@ -1,6 +1,7 @@
 import sys, os, time, torch, random, asyncio, json, argparse
 from typing import Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Security
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 from fastapi.responses import PlainTextResponse
 from starlette.concurrency import run_until_first_complete
@@ -62,7 +63,7 @@ def parse_args():
     parser.add_argument('--num_experts', metavar='NUM_EXPERTS', type=int, default=2,
                         help='Number of experts in a model like Mixtral (not implemented yet)')
     parser.add_argument('--cache_8bit', metavar='CACHE_8BIT', type=bool, default=False,
-                        help='Use 8 bit cache (not implemented)')
+                        help='Use 8 bit cache (seems to work now)')
     parser.add_argument('--num_workers', metavar='NUM_WORKERS', type=int, default=1,
                         help='Number of worker processes to use')
      # Add a new command-line option for cloud management
@@ -101,6 +102,7 @@ class PromptRequest(BaseModel):
     stop: list = []
     skip_special_tokens: bool = True
     n: int = 1
+    model: str = ""
 
 # Globals to store states
 prompts_queue = asyncio.Queue()
@@ -111,6 +113,7 @@ model = None
 tokenizer = None
 total_processing_time = 0
 loras = []
+api_keys = ["asdf", "YOUR_SECOND_KEY"]
 
 
 async def process_input(input_id):
@@ -145,7 +148,7 @@ try:
             settings_proto = ExLlamaV2Sampler.Settings()
 
             prompt_count = 0
-            print(f"Starting at {time.time()}")
+            print(f"Work found. Starting at {time.time()}")
             for _ in range(min(MAX_PROMPTS, prompts_queue.qsize())):
 
                 ids, response_event, max_tokens, temperature, top_k, top_p, token_repetition_penalty, stop, prompt = await prompts_queue.get()
@@ -196,9 +199,9 @@ try:
 
             if(args.engine == "vLLM"):
                 continue
-
+            stop_token_id = tokenizer.encode("</s>")
             token_count['read_tokens'] += prompt_count
-            print(f"Doing input_ids at {time.time()}")
+            print(f"Batch job created. Running it at {time.time()}")
             while input_ids:
                 inputs = torch.cat([x[:, -1:] for x in input_ids], dim=0)
                 if(args.lora):
@@ -215,10 +218,11 @@ try:
 
                     token_count['gen_tokens'] += 1
                     token_count['total_tokens'] += 1
-                    #stop_token = tokenizer.encode("</s>")
-                    if token.item() == tokenizer.eos_token_id or caches[i].current_seq_len == caches[i].max_seq_len:
+                    if token.item() == tokenizer.eos_token_id or token.item() == settings_clone.eos_token or caches[i].current_seq_len == caches[i].max_seq_len:
                         if token.item() == settings[i].eos_token_id:
-                            print(f"Stopping for token: {token.item()}, settings eos: {settings[i].eos_token_id}, tokenizer eos: {tokenizer.eos_token_id}")
+                            print(f"Stopping for user set stop token: {token.item()}, settings eos: {settings[i].eos_token_id}, tokenizer eos: {tokenizer.eos_token_id}")
+                        if token.item() == tokenizer.eos_token_id:
+                            print(f"Stopping for model stop token: {token.item()}, settings eos: {settings[i].eos_token_id}, tokenizer eos: {tokenizer.eos_token_id}")
                         eos.insert(0, i)  # Indices of completed prompts
                         # Send the response immediately when a prompt is completed
                         output = tokenizer.decode(input_ids[i])[0].strip()
@@ -252,7 +256,7 @@ try:
                         caches.pop(i)
                         settings.pop(i)
                     except:
-                        print(f"Pop failed due to my crappy request lookup algorithm: {i}, {ids_lookup}")
+                        print(f"Pop failed. Try lowering max_prompts: {i}, {ids_lookup}")
             #print(f"IDs lookup left over: {ids_lookup}")
             try:
                 for i in ids_lookup:
@@ -288,6 +292,15 @@ except:
     setup_model()
     asyncio.create_task(inference_loop())
 
+# API Key Authentication
+api_key_header = APIKeyHeader(name="X-API-Key")
+def get_api_key(api_key_header: str = Security(api_key_header)) -> str:
+    if api_key_header in api_keys:
+        return api_key_header
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or missing API Key",
+    )
 
 @app.get('/')
 def read_root():
@@ -296,7 +309,10 @@ def read_root():
 
 @app.post('/generate', response_class=PlainTextResponse)
 async def generate(prompt: PromptRequest):
-    global prompts_queue, results, token_count
+    global prompts_queue, results, token_count, api_keys
+    print(get_api_key)
+    #if api_key_header not in api_keys:
+        #raise HTTPException(status_code=403, detail="Invalid API Key.")
     if(args.engine == "vLLM"):
         encoded_prompt = prompt.prompt
         token_count['prompt_tokens'] += len(encoded_prompt) - 1
@@ -348,7 +364,7 @@ def setup_model():
     config.max_batch_size = 1
     #config.filters = "</s>"
     config.stop_strings = "</s>"
-    config.eos_token_id = 2
+    #config.eos_token_id = 2
     #config.qkv_embed = True
 
 
