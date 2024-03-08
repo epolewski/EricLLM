@@ -1,6 +1,7 @@
 import sys, os, time, torch, random, asyncio, json, argparse
 from typing import Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Security
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 from fastapi.responses import PlainTextResponse
 from starlette.concurrency import run_until_first_complete
@@ -39,12 +40,15 @@ def parse_args():
     # Set port
     parser.add_argument('--port', metavar='PORT', type=int, default=8000, help='Sets port')
     # Set max_seq_len
-    parser.add_argument('--max-model-len', metavar='MAX_SEQ_LEN', type=int, default=4096, help='Sets max_seq_len')
+    parser.add_argument('--max-model-len', metavar='MAX_SEQ_LEN', type=int, help='Sets max_seq_len')
     # Set max_input_len
-    parser.add_argument('--max-input-len', metavar='MAX_INPUT_LEN', type=int, default=4096, help='Sets max_input_len')
+    parser.add_argument('--max-input-len', metavar='MAX_INPUT_LEN', type=int, help='Sets max_input_len')
     # Set gpu_split
     parser.add_argument('--gpu_split', metavar='GPU_SPLIT', type=str, default='',
                         help='Sets array gpu_split and accepts input like 16,24')
+    # Set stop_character
+    parser.add_argument('--stop_character', metavar='STOP_CHARACTER', type=str, default='',
+                        help='Set the stop character such as </s>')
     # Set gpu_balance
     parser.add_argument('--gpu_balance', action='store_true', default=False,
                         help='Balance workers on GPUs to maximize throughput. Make sure --gpu_split is set to the full memory of all cards.')
@@ -53,16 +57,16 @@ def parse_args():
     # Set timeout
     parser.add_argument('--timeout', metavar='TIMEOUT', type=float, default=30.0, help='Sets timeout')
     # Set alpha_value
-    parser.add_argument('--alpha_value', metavar='ALPHA_VALUE', type=float, default=1.0, help='Sets alpha_value')
+    parser.add_argument('--alpha_value', metavar='ALPHA_VALUE', type=float, help='Sets alpha_value')
     # Set compress_pos_emb
-    parser.add_argument('--compress_pos_emb', metavar='COMPRESS_POS_EMB', type=float, default=1.0,
+    parser.add_argument('--compress_pos_emb', metavar='COMPRESS_POS_EMB', type=float,
                         help='Sets compress_pos_emb')
     parser.add_argument('--embiggen', metavar='embiggen', type=int, default=0,
                         help='Duplicates some attention layers this many times to make larger frankenmodels dynamically. May increase cromulence on benchmarks.')
     parser.add_argument('--num_experts', metavar='NUM_EXPERTS', type=int, default=2,
                         help='Number of experts in a model like Mixtral (not implemented yet)')
-    parser.add_argument('--cache_8bit', metavar='CACHE_8BIT', type=bool, default=False,
-                        help='Use 8 bit cache (not implemented)')
+    parser.add_argument('--cache_8bit', action='store_true', default=False,
+                        help='Use 8 bit cache (seems to work now)')
     parser.add_argument('--num_workers', metavar='NUM_WORKERS', type=int, default=1,
                         help='Number of worker processes to use')
      # Add a new command-line option for cloud management
@@ -72,6 +76,10 @@ def parse_args():
     default_config_engine = "ExLlamaV2"
     parser.add_argument('--engine', metavar='ENGINE', type=str, default=default_config_engine,
                         help=f'Choose the underlying engine of this server. Supports vLLM and ExLlamaV2 in quotes (default: {default_config_engine})')
+    # Set encode special tokens
+    parser.add_argument('--encode_special', action='store_true', default=False, help='Encode special tokens')
+    # Set decode special tokens
+    parser.add_argument('--decode_special', action='store_true', default=False, help='Decode special tokens')
 
 
 
@@ -101,6 +109,11 @@ class PromptRequest(BaseModel):
     stop: list = []
     skip_special_tokens: bool = True
     n: int = 1
+    model: str = ""
+    top_a: float = 1.0
+    min_p: float = 0
+    filters: list = []
+
 
 # Globals to store states
 prompts_queue = asyncio.Queue()
@@ -111,6 +124,7 @@ model = None
 tokenizer = None
 total_processing_time = 0
 loras = []
+api_keys = ["asdf", "YOUR_SECOND_KEY"]
 
 
 async def process_input(input_id):
@@ -145,7 +159,7 @@ try:
             settings_proto = ExLlamaV2Sampler.Settings()
 
             prompt_count = 0
-            print(f"Starting at {time.time()}")
+            print(f"Work found. Starting at {time.time()}")
             for _ in range(min(MAX_PROMPTS, prompts_queue.qsize())):
 
                 ids, response_event, max_tokens, temperature, top_k, top_p, token_repetition_penalty, stop, prompt = await prompts_queue.get()
@@ -182,23 +196,30 @@ try:
                 settings_clone.temperature = temperature
                 settings_clone.top_p = top_p
                 settings_clone.top_k = top_k
+                #settings_clone.top_a = top_a
+                #settings_clone.min_p = min_p
                 settings_clone.token_repetition_penalty = token_repetition_penalty
                 settings_clone.batch_size = 1
                 #settings_clone.disallow_tokens(tokenizer, [tokenizer.eos_token_id])
-                settings_clone.eos_token_id = 2
-                settings_clone.eos_token = "</s>"
+                #settings_clone.eos_token_id = 2
+                #settings_clone.filters = ['</s>']
+                
+                if args.stop_character:
+                    settings_clone.eos_token = args.stop_character
+                else:
+                    settings_clone.eos_token = None
 
                 #settings.append(settings_proto.clone())
                 settings.append(settings_clone)
-                ids_lookup[len(input_ids) - 1] = response_event #Should I change this to a hash? No because duplicates would still happen?
+                ids_lookup[len(input_ids) - 1] = response_event #Should I change this to a hash? No because duplicates would still happen? It might work now that there's no longer a race condition
             
             # Just skip all this since it doesn't work if using the vllm engine
 
             if(args.engine == "vLLM"):
                 continue
-
+            #stop_token_id = tokenizer.encode("</s>")
             token_count['read_tokens'] += prompt_count
-            print(f"Doing input_ids at {time.time()}")
+            print(f"Batch job created. Running it at {time.time()}")
             while input_ids:
                 inputs = torch.cat([x[:, -1:] for x in input_ids], dim=0)
                 if(args.lora):
@@ -209,19 +230,30 @@ try:
                 r = random.random()
 
                 for i in range(len(input_ids)):
-                    token, _, _ = ExLlamaV2Sampler.sample(logits[i:i + 1, :, :], settings[i], input_ids[i], r, tokenizer)
+                    try:
+                        token, _, _, _, end_filter = ExLlamaV2Sampler.sample(logits[i:i + 1, :, :], settings[i], input_ids[i], r, tokenizer)
+                    except Exception as e:
+                        print(f"Falling back to older ExLlamaV2 sampler and trying that. You may need to update ExLlamav2. Exception that was generated: {e}")
+                        try:
+                            token, _, _ = ExLlamaV2Sampler.sample(logits[i:i + 1, :, :], settings[i], input_ids[i], r, tokenizer)
+                        except Exception as e1:
+                            print(f"Failed getting token: {e1}")
+
                     tempIDs = torch.cat([input_ids[i], token], dim=1)
                     input_ids[i] = tempIDs
 
                     token_count['gen_tokens'] += 1
                     token_count['total_tokens'] += 1
-                    #stop_token = tokenizer.encode("</s>")
-                    if token.item() == tokenizer.eos_token_id or caches[i].current_seq_len == caches[i].max_seq_len:
-                        if token.item() == settings[i].eos_token_id:
-                            print(f"Stopping for token: {token.item()}, settings eos: {settings[i].eos_token_id}, tokenizer eos: {tokenizer.eos_token_id}")
+                    #print(f"{token.item()}: {tokenizer.decode(token, decode_special_tokens = True)[0].strip()}")
+                    if token.item() == tokenizer.eos_token_id or (settings_clone.eos_token is not None and token.item() == settings_clone.eos_token) or caches[i].current_seq_len >= caches[i].max_seq_len:
+                        print(f"Stopping at token: {token.item()}, settings eos: settings[i].eos_token_id, tokenizer eos: {tokenizer.eos_token_id}, end filter: {end_filter}")
+                        if (settings_clone.eos_token is not None and token.item() == settings_clone.eos_token):
+                            print(f"Stopping for user set stop token: {token.item()}, settings eos: settings[i].eos_token_id, tokenizer eos: {tokenizer.eos_token_id}, end filter: {end_filter}")
+                        if token.item() == tokenizer.eos_token_id:
+                            print(f"Stopping for model stop token: {token.item()}, settings eos: settings[i].eos_token_id, tokenizer eos: {tokenizer.eos_token_id}, end filter: {end_filter}")
                         eos.insert(0, i)  # Indices of completed prompts
                         # Send the response immediately when a prompt is completed
-                        output = tokenizer.decode(input_ids[i])[0].strip()
+                        output = tokenizer.decode(input_ids[i], decode_special_tokens = args.decode_special)[0].strip()
                         try:
                             if i in ids_lookup:
                                 response_event = ids_lookup.pop(i, None)
@@ -252,7 +284,7 @@ try:
                         caches.pop(i)
                         settings.pop(i)
                     except:
-                        print(f"Pop failed due to my crappy request lookup algorithm: {i}, {ids_lookup}")
+                        print(f"Pop failed. Try lowering max_prompts: {i}, {ids_lookup}")
             #print(f"IDs lookup left over: {ids_lookup}")
             try:
                 for i in ids_lookup:
@@ -288,6 +320,15 @@ except:
     setup_model()
     asyncio.create_task(inference_loop())
 
+# API Key Authentication
+api_key_header = APIKeyHeader(name="X-API-Key")
+def get_api_key(api_key_header: str = Security(api_key_header)) -> str:
+    if api_key_header in api_keys:
+        return api_key_header
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or missing API Key",
+    )
 
 @app.get('/')
 def read_root():
@@ -296,12 +337,15 @@ def read_root():
 
 @app.post('/generate', response_class=PlainTextResponse)
 async def generate(prompt: PromptRequest):
-    global prompts_queue, results, token_count
+    global prompts_queue, results, token_count, api_keys
+    print(get_api_key)
+    #if api_key_header not in api_keys:
+        #raise HTTPException(status_code=403, detail="Invalid API Key.")
     if(args.engine == "vLLM"):
         encoded_prompt = prompt.prompt
         token_count['prompt_tokens'] += len(encoded_prompt) - 1
     else:
-        encoded_prompt = tokenizer.encode(prompt.prompt)
+        encoded_prompt = tokenizer.encode(prompt.prompt, encode_special_tokens = args.encode_special)
         token_count['prompt_tokens'] += len(encoded_prompt) - 1
 
     completion_event = asyncio.Future()
@@ -335,10 +379,14 @@ def setup_model():
     config = ExLlamaV2Config()
     config.model_dir = model_directory
     config.prepare()
-    config.scale_pos_emb = args.compress_pos_emb
-    config.scale_alpha_value = args.alpha_value
-    config.max_seq_len = args.max_model_len
-    config.max_input_len = args.max_input_len
+    if args.compress_pos_emb:
+        config.scale_pos_emb = args.compress_pos_emb
+    if args.alpha_value:
+        config.scale_alpha_value = args.alpha_value
+    if args.max_model_len:
+        config.max_seq_len = args.max_model_len
+    if args.max_input_len:
+        config.max_input_len = args.max_input_len
     #config.num_experts_per_token = 2
     #config.num_experts_per_tok = 2
     #config.num_experts = args.num_experts
@@ -347,7 +395,8 @@ def setup_model():
     #config.q_handle = 2
     config.max_batch_size = 1
     #config.filters = "</s>"
-    config.stop_strings = "</s>"
+    if args.stop_character:
+        config.stop_strings = args.stop_character
     config.eos_token_id = 2
     #config.qkv_embed = True
 
