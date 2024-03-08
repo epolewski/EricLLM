@@ -1,6 +1,8 @@
 # EricLLM
 A fast batching API to serve LLM models
 
+Update 3/7/2024: Bug fixes. Added some features. Made some things default to the model settings rather than arbitrary values unless specified. Implemented stop tokens and it's kinda working but the tokenizer keeps spitting out things like < /s and > as different tokens instead of "\</s>".
+
 Update 1/27/2024: Fixed one of the major bugs that would cause some requests to not return when under heavy load. Added extremly simple vLLM engine support. I'm trying to work around that multi-gpu bug and see if I can do it from here. Implemented the 8 bit cache but haven't tested it. Fixed the lora support. Adjusted timeout behavior.
 
 Update 01/17/2024: Bunch of random little upgrades/bug fixes. Some speed increases. Added lora support. Successfully found a bunch of things that don't work or make things worse. I added an --embiggen flag if you want to duplicate the attention layers and make arbitrarily large frankenmodels. I've not benchmarked this against anything. The decrease in speed may not reflect properly in the console. It doesn't work well, and I suspect it's because the cache is being shared between duplicate layers and causing issues. But the API server, on the whole, works a lot better now. My use of this is expanding and I'll keep dropping the updates in.
@@ -53,6 +55,8 @@ options:
   --verbose             Sets verbose
   --model MODEL_DIRECTORY
                         Sets model_directory
+  --lora LORA_DIRECTORY
+                        Sets lora_directory
   --host HOST           Sets host
   --port PORT           Sets port
   --max-model-len MAX_SEQ_LEN
@@ -61,22 +65,29 @@ options:
                         Sets max_input_len
   --gpu_split GPU_SPLIT
                         Sets array gpu_split and accepts input like 16,24
-  --gpu_balance         Balance workers on GPUs to maximize throughput. Make sure --gpu_split is set to the full memory of all cards.
+  --stop_character STOP_CHARACTER
+                        Set the stop character such as </s>
+  --gpu_balance         Balance workers on GPUs to maximize throughput. Make sure --gpu_split is set to the full
+                        memory of all cards.
   --max_prompts MAX_PROMPTS
                         Max prompts to process at once
   --timeout TIMEOUT     Sets timeout
   --alpha_value ALPHA_VALUE
                         Sets alpha_value
-  --embiggen EMBIGGEN
-                        Duplicates some attention layers this many times to make larger frankenmodels dynamically. May increase cromulence on benchmarks.
   --compress_pos_emb COMPRESS_POS_EMB
                         Sets compress_pos_emb
+  --embiggen embiggen   Duplicates some attention layers this many times to make larger frankenmodels dynamically. May
+                        increase cromulence on benchmarks.
   --num_experts NUM_EXPERTS
                         Number of experts in a model like Mixtral (not implemented yet)
-  --cache_8bit CACHE_8BIT
-                        Use 8 bit cache (not implemented)
+  --cache_8bit          Use 8 bit cache (seems to work now)
   --num_workers NUM_WORKERS
                         Number of worker processes to use
+  --managed MANAGED     Enables online management of this server. (default: https://default-config-api.com/config)
+  --engine ENGINE       Choose the underlying engine of this server. Supports vLLM and ExLlamaV2 in quotes (default:
+                        ExLlamaV2)
+  --encode_special      Encode special tokens
+  --decode_special      Decode special tokens
 ```
 
 ## About
