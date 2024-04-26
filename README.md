@@ -1,6 +1,8 @@
 # EricLLM
 A fast batching API to serve LLM models
 
+Update 4/26/24: Fixed a bunch of issues. Fixed stop characters not stopping generation in some models. Added a bunch of little features I needed for another project and in an attempt to fix the stop character issue. Still have to knock out some of the issues tab issues.
+
 Update 3/7/2024: Bug fixes. Added some features. Made some things default to the model settings rather than arbitrary values unless specified. Implemented stop tokens and it's kinda working but the tokenizer keeps spitting out things like < /s and > as different tokens instead of "\</s>".
 
 Update 1/27/2024: Fixed one of the major bugs that would cause some requests to not return when under heavy load. Added extremly simple vLLM engine support. I'm trying to work around that multi-gpu bug and see if I can do it from here. Implemented the 8 bit cache but haven't tested it. Fixed the lora support. Adjusted timeout behavior.
