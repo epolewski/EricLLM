@@ -201,11 +201,12 @@ try:
                 settings_clone.token_repetition_penalty = token_repetition_penalty
                 settings_clone.batch_size = 1
                 #settings_clone.disallow_tokens(tokenizer, [tokenizer.eos_token_id])
-                #settings_clone.eos_token_id = 2
+                settings_clone.eos_token_id = 128001
                 #settings_clone.filters = ['</s>']
                 
                 if args.stop_character:
                     settings_clone.eos_token = args.stop_character
+                    tokenizer.eos_token = args.stop_character
                 else:
                     settings_clone.eos_token = None
 
@@ -228,8 +229,10 @@ try:
                     logits = model.forward(inputs, caches, input_mask=None).float().cpu()
                 eos = []
                 r = random.random()
-
+                stop = False
                 for i in range(len(input_ids)):
+                    if stop == True:
+                        break
                     try:
                         token, _, _, _, end_filter = ExLlamaV2Sampler.sample(logits[i:i + 1, :, :], settings[i], input_ids[i], r, tokenizer)
                     except Exception as e:
@@ -245,13 +248,18 @@ try:
                     token_count['gen_tokens'] += 1
                     token_count['total_tokens'] += 1
                     #print(f"{token.item()}: {tokenizer.decode(token, decode_special_tokens = True)[0].strip()}")
+
+
                     if token.item() == tokenizer.eos_token_id or (settings_clone.eos_token is not None and token.item() == settings_clone.eos_token) or caches[i].current_seq_len >= caches[i].max_seq_len:
                         print(f"Stopping at token: {token.item()}, settings eos: settings[i].eos_token_id, tokenizer eos: {tokenizer.eos_token_id}, end filter: {end_filter}")
                         if (settings_clone.eos_token is not None and token.item() == settings_clone.eos_token):
                             print(f"Stopping for user set stop token: {token.item()}, settings eos: settings[i].eos_token_id, tokenizer eos: {tokenizer.eos_token_id}, end filter: {end_filter}")
                         if token.item() == tokenizer.eos_token_id:
                             print(f"Stopping for model stop token: {token.item()}, settings eos: settings[i].eos_token_id, tokenizer eos: {tokenizer.eos_token_id}, end filter: {end_filter}")
+                        stop = True
+
                         eos.insert(0, i)  # Indices of completed prompts
+
                         # Send the response immediately when a prompt is completed
                         output = tokenizer.decode(input_ids[i], decode_special_tokens = args.decode_special)[0].strip()
                         try:
@@ -272,9 +280,28 @@ try:
                             continue
 
 
-                        #
-                        continue
+                    '''
+                    # Check if the last character matches
+                    if args.stop_character:
+                        stop_character = args.stop_character[-1]  # Get the last character of args.stop_character
+                        if token.item() == ord(stop_character):
+                            decoded_string = tokenizer.decode(input_ids[i], decode_special_tokens=args.decode_special)[0].strip()
+                            last_chars_decoded = decoded_string[-len(args.stop_character):]  # Get the last characters of the decoded string
+                            if last_chars_decoded == args.stop_character:
+                                print(f"Healed a stop token. Stopping at token: {token.item()}, settings eos: settings[i].eos_token_id, tokenizer eos: {tokenizer.eos_token_id}, end filter: {end_filter}")
+                                healedStop = True
 
+                    if token.item() == tokenizer.eos_token_id or \
+                        (settings_clone.eos_token is not None and token.item() == settings_clone.eos_token) or \
+                        caches[i].current_seq_len >= caches[i].max_seq_len or \
+                        healedStop == True:
+
+                        # Check if token matches stop character
+                        if token.item() == tokenizer.eos_token_id:
+                            print(f"Stopping for model stop token: {token.item()}, settings eos: settings[i].eos_token_id, tokenizer eos: {tokenizer.eos_token_id}, end filter: {end_filter}")
+                        elif settings_clone.eos_token is not None and token.item() == settings_clone.eos_token:
+                            print(f"Stopping for user set stop token: {token.item()}, settings eos: settings[i].eos_token_id, tokenizer eos: {tokenizer.eos_token_id}, end filter: {end_filter}")
+                        '''
                     # Remove completed prompts from the lists
 
                 for i in eos:
@@ -284,7 +311,7 @@ try:
                         caches.pop(i)
                         settings.pop(i)
                     except:
-                        print(f"Pop failed. Try lowering max_prompts: {i}, {ids_lookup}")
+                        print(f"Failed to retrieve a reply in time. Try lowering max_prompts: {i}, {ids_lookup}")
             #print(f"IDs lookup left over: {ids_lookup}")
             try:
                 for i in ids_lookup:
@@ -397,7 +424,7 @@ def setup_model():
     #config.filters = "</s>"
     if args.stop_character:
         config.stop_strings = args.stop_character
-    config.eos_token_id = 2
+    #config.eos_token_id = 128001
     #config.qkv_embed = True
 
 
